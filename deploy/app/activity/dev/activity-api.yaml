@@ -1,0 +1,72 @@
+kind: Service
+apiVersion: v1
+metadata:
+  labels:
+    k8s-app: activity-api
+  name: activity-api
+  namespace: iothub-gateway
+spec:
+  type: NodePort
+  ports:
+    - port: 7061
+      targetPort: api
+      nodePort: 31235
+      name: api
+  selector:
+    name: activity-api
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: activity-api
+  namespace: iothub-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: activity-api
+  template:
+    metadata:
+      labels:
+        name: activity-api
+    spec:
+      hostNetwork: true
+      hostname: activity-api
+      subdomain: iothub-gateway
+      containers:
+        - name: activity-api
+          image: vmapi/hubcentral:activity.api.dev.1.0.11
+          ports:
+            - name: api
+              containerPort: 7061
+              protocol: TCP
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: "Dev"
+            - name: ASPNETCORE_URLS
+              value: "http://+:7061"
+            - name: TZ
+              value: "Asia/Bangkok"
+            - name: Serilog__Sink
+              value: file
+            - name: Serilog__MinimumLevel__Override__Microsoft
+              value: Information
+            - name: ConnectionStrings__Database
+              value: "Server=192.168.8.230;Database=TrongTestDB1;Username=postgres;Password=admin123.;Pooling=true"              
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "250m"
+          volumeMounts:
+            - name: data-vol
+              mountPath: /app/logs
+              subPath: activity-api-logs
+      volumes:
+        - name: data-vol
+          persistentVolumeClaim:
+            claimName: iothub-gateway-pvc
+      imagePullSecrets:
+        - name: registry-secret-clound
