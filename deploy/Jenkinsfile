@@ -1,0 +1,87 @@
+def PR_STATE="CREATED"
+pipeline {
+    agent {
+        label 'linux'
+    }
+    environment {
+        ENV="Staging"
+        BITBUCKET_PROJECT="Hub"
+        JIRA_PROJECT="VC"
+        REPO="pois"
+        DEPLOY_REPO="Deployment"
+        K8S_NAME_SPACE="iothub-gateway-staging"
+    }
+
+    parameters {
+        string(name: 'RELEASE_BRANCH', defaultValue: '', description: 'Put release branch to run CI/CD')
+        string(name: 'JIRA_LABEL', defaultValue: '', description: 'Put jira label to push change logs')
+    }
+    
+    stages {
+        stage("Environment Check") {
+            steps {
+                sh 'echo "Checking build environment..."'
+                sh 'python3 --version'
+                sh 'which git'
+                sh 'which yq'
+                sh 'pwd'
+                sh 'whoami'
+            }
+        }        
+        stage("Clean up"){
+            steps{
+                echo "clean up workspace at path "
+                sh "pwd"
+                deleteDir()
+            }
+        }
+        stage("Clone repo"){
+            steps{
+                sh "git clone ssh://git@bitbucket-ssh.vietmap.vn:7999/${BITBUCKET_PROJECT}/${REPO}.git"
+            }
+        }
+        stage("Checkout repo"){
+            steps{
+                dir("$REPO"){
+                    sh "git checkout ${params.RELEASE_BRANCH}"
+                }              
+            }
+        }   
+        stage("Build and Deploy") {
+            steps {
+                script {
+                    try {
+                        dir("${WORKSPACE}/${REPO}/Deployment") {
+                            // Ensure build.py exists and is executable
+                            if (!fileExists('build.py')) {
+                                error "build.py not found in expected location"
+                            }
+                            
+                            sh """
+                                chmod +x build.py
+                                python3 build.py ${ENV} CICD ${REPO}
+                            """
+                        }
+                    } catch (Exception e) {
+                        error "Build failed: ${e.getMessage()}"
+                    }
+                }
+            }
+            
+        }    
+    }
+	post {
+        success {
+            office365ConnectorSend webhookUrl: 'https://vietmapcorp.webhook.office.com/webhookb2/205670f3-463f-4ac3-85f8-f84b9f0da76e@fc2e159c-528b-4132-b3c0-f43226646ad7/JenkinsCI/74682a3b843b46529b662e5d4b85f65e/e1fe988a-0959-44ad-889d-44f6a1637286',
+                message: "Deploy Done: ${env.JOB_NAME} [${env.BUILD_NUMBER}]",
+                status: 'Success',
+                color: '#28a745'
+        }        
+        failure {
+            office365ConnectorSend webhookUrl: 'https://vietmapcorp.webhook.office.com/webhookb2/205670f3-463f-4ac3-85f8-f84b9f0da76e@fc2e159c-528b-4132-b3c0-f43226646ad7/JenkinsCI/74682a3b843b46529b662e5d4b85f65e/e1fe988a-0959-44ad-889d-44f6a1637286',
+                message: "${env.JOB_NAME} - Deploy #${env.BUILD_NUMBER} failed. Check the Jenkins console output:\n ${env.BUILD_URL}console",
+                status: 'Fail',
+                color: '#dc3545'             
+        }
+	}    
+}
