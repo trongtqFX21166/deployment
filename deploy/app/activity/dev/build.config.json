@@ -1,8 +1,9 @@
 [
   {
-    "app": "pietmapLive.Activity.Api",
+    "app": "VietmapLive.Activity.Api",
     "path": "../activity/Apis/VietmapLive.Activity.Api",
-    "yaml": "activity-api.yaml"
-    "index": 0
+    "yaml": "activity-api.yaml",
+    "index": 0,
+    "version": "1.0.1"
   }
 ]
