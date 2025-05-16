@@ -4,6 +4,6 @@
     "path": "../activity/Apis/VietmapLive.Activity.Api",
     "yaml": "activity-api.yaml",
     "index": 0,
-    "version": "1.0.1"
+    "version": "1.0.3"
   }
 ]

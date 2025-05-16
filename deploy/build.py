@@ -57,7 +57,7 @@ def get_app_version(app_setting_path: str) -> Optional[str]:
         print(f"Failed to read app config: {e}")
         return None
 
-def build_activity_api(path: str, image_tag: str, version: str, build_mode: str) -> bool:
+def build(path: str, image_tag: str, version: str, build_mode: str) -> bool:
     """Build Activity API and create Docker image using dotnet commands directly."""
     os.chdir(path)
     print(f"Building Activity API at {os.getcwd()}")
@@ -193,18 +193,41 @@ def commit_changes(env: str, config: List[Dict[str, Any]]) -> bool:
     
     return True
 
+def filter_projects(config: List[Dict[str, Any]], projects: List[str]) -> List[Dict[str, Any]]:
+    """Filter configuration to only include specified projects."""
+    if not projects:
+        return config  # Return all projects if none specified
+    
+    filtered_config = []
+    for item in config:
+        if item['app'] in projects:
+            filtered_config.append(item)
+    
+    if not filtered_config:
+        print(f"Warning: None of the specified projects {projects} found in configuration")
+    
+    return filtered_config
+
 def main():
     """Main function to build and deploy the Activity API."""
-    if len(sys.argv) != 4:
-        print("Usage: python build.py <ENV> <BUILD_MODE> <REPO>")
+    # Check for required arguments
+    if len(sys.argv) < 4:
+        print("Usage: python build.py <ENV> <BUILD_MODE> <REPO> [PROJECT1 PROJECT2 ...]")
         sys.exit(1)
 
     env = sys.argv[1]  # dev, prod
     build_mode = sys.argv[2]  # CI, CICD
     repo = sys.argv[3]  # activity
     
+    # Get optional project names to build (if any)
+    projects_to_build = sys.argv[4:] if len(sys.argv) > 4 else []
+    
     original_path = os.getcwd()
     print(f"Starting build process for {repo} in {env} environment with mode {build_mode}")
+    if projects_to_build:
+        print(f"Building specific projects: {', '.join(projects_to_build)}")
+    else:
+        print("Building all projects")
     print(f"Current directory: {original_path}")
 
     # Read configuration file
@@ -215,8 +238,15 @@ def main():
     
     config = load_config(str(config_path))
     print(f"Successfully loaded config with {len(config)} items")
-
+    
+    # Filter projects if specific ones were requested
+    if projects_to_build:
+        original_config = config.copy()
+        config = filter_projects(config, projects_to_build)
+        print(f"Filtered to {len(config)} projects to build")
+    
     build_results = []
+    built_projects = []
     
     # Process each item in configuration
     for index, item in enumerate(config):
@@ -228,6 +258,13 @@ def main():
         old_version = item.get('version', '1.0.0')
         yaml_files = item['yaml'].split('|') if '|' in item['yaml'] else [item['yaml']]
         image_tag = item['app']
+        
+        # Find the original index in the full config for updating later
+        original_index = None
+        for i, orig_item in enumerate(original_config if 'original_config' in locals() else config):
+            if orig_item['app'] == item['app']:
+                original_index = i
+                break
 
         # Convert relative path to absolute
         if not os.path.isabs(path):
@@ -265,7 +302,7 @@ def main():
         print(f"Version changed from {old_version} to {version} - building {image_tag}")
         
         # Build the application
-        if not build_activity_api(path, image_tag, version, build_mode):
+        if not build(path, image_tag, version, build_mode):
             print(f"Failed to build {image_tag}")
             build_results.append(False)
             continue
@@ -274,11 +311,17 @@ def main():
         os.chdir(original_path)
         
         # Update configuration with new version after successful build
-        config[index]['version'] = version
-        save_config(str(config_path), config)
+        if original_index is not None:
+            original_config[original_index]['version'] = version
+            save_config(str(config_path), original_config)
+        else:
+            config[index]['version'] = version
+            save_config(str(config_path), config)
+            
         print(f"Updated build.config.json with new version {version} for {image_tag}")
         
         build_results.append(True)
+        built_projects.append(image_tag)
         print(f"Successfully processed {image_tag}")
         print("#" * 80)
 
@@ -286,6 +329,11 @@ def main():
     if False in build_results:
         print("One or more builds failed")
         sys.exit(1)
+    
+    if built_projects:
+        print(f"\nSuccessfully built projects: {', '.join(built_projects)}")
+    else:
+        print("\nNo projects were built (no version changes or no matching projects found)")
         
     print("\nAll operations completed successfully")
     sys.exit(0)
