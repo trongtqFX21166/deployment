@@ -7,7 +7,6 @@ pipeline {
         ENV="Staging"
         BITBUCKET_PROJECT="Hub"
         JIRA_PROJECT="VC"
-        REPO="pois"
         DEPLOY_REPO="Deployment"
         K8S_NAME_SPACE="iothub-gateway-staging"
     }
@@ -15,6 +14,9 @@ pipeline {
     parameters {
         string(name: 'RELEASE_BRANCH', defaultValue: '', description: 'Put release branch to run CI/CD')
         string(name: 'JIRA_LABEL', defaultValue: '', description: 'Put jira label to push change logs')
+        string(name: 'REPO', defaultValue: 'pois', description: 'Repository to deploy (e.g., activity, pois)')
+        string(name: 'PROJECTS', defaultValue: '', description: 'Comma-separated list of projects to deploy (leave empty to deploy all)')
+        choice(name: 'BUILD_MODE', choices: ['CICD', 'CI'], defaultValue: 'CICD', description: 'Build mode: CI for build only, CICD for build and deploy')
     }
     
     stages {
@@ -35,31 +37,45 @@ pipeline {
                 deleteDir()
             }
         }
-        stage("Clone repo"){
+        stage("Clone repos"){
             steps{
-                sh "git clone ssh://git@bitbucket-ssh.vietmap.vn:7999/${BITBUCKET_PROJECT}/${REPO}.git"
+                // Clone Deployment repo
+                sh "git clone ssh://git@bitbucket-ssh.vietmap.vn:7999/${BITBUCKET_PROJECT}/${DEPLOY_REPO}.git"
+                
+                // Clone repository to deploy
+                sh "git clone ssh://git@bitbucket-ssh.vietmap.vn:7999/${BITBUCKET_PROJECT}/${params.REPO}.git"
             }
         }
-        stage("Checkout repo"){
+        stage("Checkout branch"){
             steps{
-                dir("$REPO"){
+                // Checkout the same branch in both repos
+                dir("${DEPLOY_REPO}"){
+                    sh "git checkout ${params.RELEASE_BRANCH}"
+                }
+                dir("${params.REPO}"){
                     sh "git checkout ${params.RELEASE_BRANCH}"
                 }              
             }
         }   
-        stage("Build and Deploy") {
+        stage("Build and Push Registry") {
             steps {
                 script {
                     try {
-                        dir("${WORKSPACE}/${REPO}/Deployment") {
+                        dir("${WORKSPACE}/${DEPLOY_REPO}") {
                             // Ensure build.py exists and is executable
                             if (!fileExists('build.py')) {
                                 error "build.py not found in expected location"
                             }
                             
+                            // Process PROJECTS parameter to pass to build.py
+                            def projectsParam = ""
+                            if (params.PROJECTS?.trim()) {
+                                projectsParam = params.PROJECTS.split(',').collect { it.trim() }.join(' ')
+                            }
+                            
                             sh """
                                 chmod +x build.py
-                                python3 build.py ${ENV} CICD ${REPO}
+                                python3 build.py ${ENV} ${params.BUILD_MODE} ${params.REPO} ${projectsParam}
                             """
                         }
                     } catch (Exception e) {
@@ -67,21 +83,20 @@ pipeline {
                     }
                 }
             }
-            
         }    
     }
-	post {
+    post {
         success {
             office365ConnectorSend webhookUrl: 'https://vietmapcorp.webhook.office.com/webhookb2/205670f3-463f-4ac3-85f8-f84b9f0da76e@fc2e159c-528b-4132-b3c0-f43226646ad7/JenkinsCI/74682a3b843b46529b662e5d4b85f65e/e1fe988a-0959-44ad-889d-44f6a1637286',
-                message: "Deploy Done: ${env.JOB_NAME} [${env.BUILD_NUMBER}]",
+                message: "Deploy Done: ${env.JOB_NAME} [${env.BUILD_NUMBER}] - Repo: ${params.REPO}, Projects: ${params.PROJECTS ?: 'all'}, Mode: ${params.BUILD_MODE}",
                 status: 'Success',
                 color: '#28a745'
         }        
         failure {
             office365ConnectorSend webhookUrl: 'https://vietmapcorp.webhook.office.com/webhookb2/205670f3-463f-4ac3-85f8-f84b9f0da76e@fc2e159c-528b-4132-b3c0-f43226646ad7/JenkinsCI/74682a3b843b46529b662e5d4b85f65e/e1fe988a-0959-44ad-889d-44f6a1637286',
-                message: "${env.JOB_NAME} - Deploy #${env.BUILD_NUMBER} failed. Check the Jenkins console output:\n ${env.BUILD_URL}console",
+                message: "${env.JOB_NAME} - Deploy #${env.BUILD_NUMBER} failed for Repo: ${params.REPO}, Projects: ${params.PROJECTS ?: 'all'}, Mode: ${params.BUILD_MODE}. Check the Jenkins console output:\n ${env.BUILD_URL}console",
                 status: 'Fail',
                 color: '#dc3545'             
         }
-	}    
+    }    
 }

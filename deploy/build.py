@@ -114,13 +114,13 @@ ENTRYPOINT ["dotnet", "{project_name}.dll"]
     
     print(f"Created Dockerfile at {dockerfile_path}")
     
-    # Convert image tag to lowercase for Docker
-    lowercase_image_tag = image_tag.lower()
-    
     # In CI mode, skip Docker build
     if build_mode == "CI":
-        print(f"CI mode - skipping Docker build for {lowercase_image_tag}")
+        print(f"CI mode - skipping Docker build for {image_tag}")
         return True
+    
+    # Convert image tag to lowercase for Docker
+    lowercase_image_tag = image_tag.lower()
     
     # Build Docker image
     print(f"Building Docker image {lowercase_image_tag}.{version}...")
@@ -160,10 +160,18 @@ def update_yaml_files(env: str, yaml_files: List[str], image_tag: str, version: 
             print(f"Warning: YAML file {yaml_path} does not exist, skipping")
             continue
             
-        image_value = f"{REGISTRY_URL}:{image_tag}.{version}"
+        # Format Docker image tag using the app name from config
+        # Format: {app_name}.{env}.{version}
+        # Example: vietmaplive.activity.api.dev.1.0.3
+        image_tag_lower = image_tag.lower()
+        image_value = f"{REGISTRY_URL}:{image_tag_lower}.{env.lower()}.{version}"
+        
+        print(f"Updating {yaml_file} with image: {image_value}")
+        
+        # Fixed yq command - removed parentheses in the selection expression
         cmd = [
             "yq", "-i",
-            f'(select(.kind == "Deployment") | .spec.template.spec.containers[] | .image) = "{image_value}"',
+            f'.spec.template.spec.containers[0].image = "{image_value}"',
             str(yaml_path)
         ]
         
@@ -239,9 +247,11 @@ def main():
     config = load_config(str(config_path))
     print(f"Successfully loaded config with {len(config)} items")
     
+    # Create a copy of the original config for all cases to avoid reference errors
+    original_config = config.copy()
+    
     # Filter projects if specific ones were requested
     if projects_to_build:
-        original_config = config.copy()
         config = filter_projects(config, projects_to_build)
         print(f"Filtered to {len(config)} projects to build")
     
@@ -261,7 +271,7 @@ def main():
         
         # Find the original index in the full config for updating later
         original_index = None
-        for i, orig_item in enumerate(original_config if 'original_config' in locals() else config):
+        for i, orig_item in enumerate(original_config):
             if orig_item['app'] == item['app']:
                 original_index = i
                 break
@@ -293,8 +303,9 @@ def main():
         # Set new version
         version = str(app_version)
         
-        # Skip build if version hasn't changed
-        if old_version == version:
+        # In CI mode, always build regardless of version change
+        # In CICD mode, skip build if version hasn't changed
+        if build_mode == "CICD" and old_version == version:
             print(f"Version {version} unchanged - skipping build for {image_tag}")
             build_results.append(True)
             continue
@@ -310,15 +321,34 @@ def main():
         # Return to original directory
         os.chdir(original_path)
         
-        # Update configuration with new version after successful build
+        # In CI mode, skip updating YAML files and config
+        if build_mode == "CI":
+            print(f"CI mode - skipping YAML and config updates for {image_tag}")
+            build_results.append(True)
+            built_projects.append(image_tag)
+            continue
+        
+        # Update YAML files with the new image tag (only in CICD mode)
+        if not update_yaml_files(env, yaml_files, image_tag, version):
+            print(f"Failed to update YAML files for {image_tag}")
+            build_results.append(False)
+            continue
+        
+        # Update configuration with new version after successful build (only in CICD mode)
         if original_index is not None:
             original_config[original_index]['version'] = version
             save_config(str(config_path), original_config)
         else:
-            config[index]['version'] = version
-            save_config(str(config_path), config)
+            print(f"Warning: Could not find {image_tag} in original configuration, not updating version")
             
         print(f"Updated build.config.json with new version {version} for {image_tag}")
+        
+        # Commit changes (only in CICD mode)
+        print("Committing changes to Git...")
+        if not commit_changes(env, original_config):
+            print("Failed to commit changes")
+            build_results.append(False)
+            continue
         
         build_results.append(True)
         built_projects.append(image_tag)

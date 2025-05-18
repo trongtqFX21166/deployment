@@ -14,6 +14,10 @@ spec:
       name: api
   selector:
     name: activity-api
+  template:
+    spec:
+      containers:
+        - image: vmapi/hubcentral:vietmaplive.activity.api.dev.1.0.4
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -35,7 +39,7 @@ spec:
       subdomain: iothub-gateway
       containers:
         - name: activity-api
-          image: vmapi/hubcentral:activity.api.dev.1.0.11
+          image: vmapi/hubcentral:vietmaplive.activity.api.dev.1.0.4
           ports:
             - name: api
               containerPort: 7061
@@ -52,7 +56,7 @@ spec:
             - name: Serilog__MinimumLevel__Override__Microsoft
               value: Information
             - name: ConnectionStrings__Database
-              value: "Server=192.168.8.230;Database=TrongTestDB1;Username=postgres;Password=admin123.;Pooling=true"              
+              value: "Server=192.168.8.230;Database=TrongTestDB1;Username=postgres;Password=admin123.;Pooling=true"
           resources:
             requests:
               memory: "512Mi"
