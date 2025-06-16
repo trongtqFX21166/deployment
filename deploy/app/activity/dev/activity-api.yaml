@@ -17,7 +17,7 @@ spec:
   template:
     spec:
       containers:
-        - image: vmapi/hubcentral:vietmaplive.activity.api.dev.1.0.4
+        - image: vmapi/hubcentral:vietmaplive.activity.api.dev.1.0.5
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -39,7 +39,7 @@ spec:
       subdomain: iothub-gateway
       containers:
         - name: activity-api
-          image: vmapi/hubcentral:vietmaplive.activity.api.dev.1.0.4
+          image: vmapi/hubcentral:vietmaplive.activity.api.dev.1.0.5
           ports:
             - name: api
               containerPort: 7061
