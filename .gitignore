@@ -366,7 +366,12 @@ coverage-reports/
 tools/
 #App_Data/
 *.txt
-app/
+# Ignore app build outputs but keep deployment configs
+/app/
+**/bin/
+**/obj/
+# Keep deployment app configs
+!deploy/app/
 .vscode/
 /Mimi.Infrastructure/Migrations/20240522042906_initDBMimi.Designer.cs
 /Mimi.Infrastructure/Migrations/20240522042906_initDBMimi.cs

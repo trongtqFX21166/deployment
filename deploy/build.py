@@ -239,7 +239,7 @@ def main():
     print(f"Current directory: {original_path}")
 
     # Read configuration file
-    config_path = Path(f"app/activity/{env.lower()}/build.config.json")
+    config_path = Path(f"app/{repo}/{env.lower()}/build.config.json")
     if not config_path.exists():
         print(f"Error: Configuration file not found at {config_path.absolute()}")
         sys.exit(1)
