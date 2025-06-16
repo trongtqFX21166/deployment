@@ -1,0 +1,160 @@
+---
+- name: Deploy Activity API to Kubernetes
+  hosts: dev_servers
+  gather_facts: yes
+  vars:
+    project_name: "activity"
+    config_file: "../app/{{ project_name }}/{{ environment }}/build.config.json"
+    yaml_source_dir: "../app/{{ project_name }}/{{ environment }}"
+    temp_deployment_dir: "/tmp/k8s-deployments"
+    backup_timestamp: "{{ ansible_date_time.epoch }}"
+    
+  tasks:
+    - name: Ensure backup directory exists
+      file:
+        path: "{{ deployment_backup_dir }}/{{ project_name }}/{{ backup_timestamp }}"
+        state: directory
+        mode: '0755'
+      become: yes
+
+    - name: Load build configuration
+      set_fact:
+        build_config: "{{ lookup('file', config_file) | from_json }}"
+      delegate_to: localhost
+
+    - name: Display loaded configuration
+      debug:
+        msg: "Loaded {{ build_config | length }} applications from config"
+
+    - name: Filter applications ready to deploy
+      set_fact:
+        ready_to_deploy: "{{ build_config | selectattr('readytodeploy', 'equalto', 1) | list }}"
+
+    - name: Display applications ready to deploy
+      debug:
+        msg: "Applications ready to deploy: {{ ready_to_deploy | map(attribute='app') | list }}"
+
+    - name: Check if any applications are ready to deploy
+      fail:
+        msg: "No applications are marked as ready to deploy (readytodeploy = 1)"
+      when: ready_to_deploy | length == 0
+
+    - name: Create temporary deployment directory
+      file:
+        path: "{{ temp_deployment_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Copy YAML files for ready applications
+      copy:
+        src: "{{ yaml_source_dir }}/{{ item.yaml }}"
+        dest: "{{ temp_deployment_dir }}/{{ item.yaml }}"
+        mode: '0644'
+      loop: "{{ ready_to_deploy }}"
+      loop_control:
+        label: "{{ item.app }} -> {{ item.yaml }}"
+
+    - name: Backup existing deployments before applying new ones
+      shell: |
+        if kubectl get deployment {{ item.app.lower() | replace('.', '-') }} -n {{ 'activity' if environment == 'prod' else 'iothub-gateway' }} &>/dev/null; then
+          kubectl get deployment {{ item.app.lower() | replace('.', '-') }} -n {{ 'activity' if environment == 'prod' else 'iothub-gateway' }} -o yaml > {{ deployment_backup_dir }}/{{ project_name }}/{{ backup_timestamp }}/{{ item.app.lower() | replace('.', '-') }}-backup.yaml
+          echo "Backed up deployment {{ item.app.lower() | replace('.', '-') }}"
+        else
+          echo "Deployment {{ item.app.lower() | replace('.', '-') }} does not exist, skipping backup"
+        fi
+      environment:
+        KUBECONFIG: "{{ kubectl_config_path }}"
+      loop: "{{ ready_to_deploy }}"
+      loop_control:
+        label: "Backup {{ item.app }}"
+      register: backup_results
+      failed_when: false
+
+    - name: Display backup results
+      debug:
+        msg: "{{ item.stdout_lines }}"
+      loop: "{{ backup_results.results }}"
+      loop_control:
+        label: "Backup result for {{ item.item.app }}"
+
+    - name: Apply Kubernetes deployments
+      shell: kubectl apply -f {{ temp_deployment_dir }}/{{ item.yaml }}
+      environment:
+        KUBECONFIG: "{{ kubectl_config_path }}"
+      loop: "{{ ready_to_deploy }}"
+      loop_control:
+        label: "Deploy {{ item.app }} from {{ item.yaml }}"
+      register: deploy_results
+
+    - name: Display deployment results
+      debug:
+        msg: "{{ item.stdout_lines }}"
+      loop: "{{ deploy_results.results }}"
+      loop_control:
+        label: "Deploy result for {{ item.item.app }}"
+
+    - name: Wait for deployments to be ready
+      shell: kubectl rollout status deployment/{{ item.app.lower() | replace('.', '-') }} -n {{ 'activity' if environment == 'prod' else 'iothub-gateway' }} --timeout=300s
+      environment:
+        KUBECONFIG: "{{ kubectl_config_path }}"
+      loop: "{{ ready_to_deploy }}"
+      loop_control:
+        label: "Wait for {{ item.app }}"
+      register: rollout_results
+      failed_when: rollout_results.rc != 0
+
+    - name: Display rollout status
+      debug:
+        msg: "{{ item.stdout_lines }}"
+      loop: "{{ rollout_results.results }}"
+      loop_control:
+        label: "Rollout status for {{ item.item.app }}"
+
+    - name: Verify deployments are running
+      shell: kubectl get pods -n {{ 'activity' if environment == 'prod' else 'iothub-gateway' }} -l name={{ item.app.lower() | replace('.', '-') }} --no-headers
+      environment:
+        KUBECONFIG: "{{ kubectl_config_path }}"
+      loop: "{{ ready_to_deploy }}"
+      loop_control:
+        label: "Verify {{ item.app }}"
+      register: pod_status
+
+    - name: Display pod status
+      debug:
+        msg: "Pods for {{ item.item.app }}: {{ item.stdout_lines }}"
+      loop: "{{ pod_status.results }}"
+      loop_control:
+        label: "Pod status for {{ item.item.app }}"
+
+    - name: Reset readytodeploy flag to 0 after successful deployment
+      replace:
+        path: "{{ config_file }}"
+        regexp: '("app": "{{ item.app }}"[^}]*"readytodeploy": )1'
+        replace: '\g<1>0'
+      loop: "{{ ready_to_deploy }}"
+      loop_control:
+        label: "Reset flag for {{ item.app }}"
+      delegate_to: localhost
+      when: deploy_results is succeeded
+
+    - name: Clean up temporary deployment directory
+      file:
+        path: "{{ temp_deployment_dir }}"
+        state: absent
+
+    - name: Summary of deployment
+      debug:
+        msg: |
+          Deployment Summary:
+          - Environment: {{ environment }}
+          - Applications deployed: {{ ready_to_deploy | map(attribute='app') | list | join(', ') }}
+          - Backup location: {{ deployment_backup_dir }}/{{ project_name }}/{{ backup_timestamp }}
+          - All readytodeploy flags have been reset to 0
+
+  handlers:
+    - name: Rollback deployment on failure
+      shell: kubectl apply -f {{ deployment_backup_dir }}/{{ project_name }}/{{ backup_timestamp }}/{{ item.app.lower() | replace('.', '-') }}-backup.yaml
+      environment:
+        KUBECONFIG: "{{ kubectl_config_path }}"
+      loop: "{{ ready_to_deploy }}"
+      when: deploy_results is failed

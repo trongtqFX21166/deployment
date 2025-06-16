@@ -334,10 +334,12 @@ def main():
             build_results.append(False)
             continue
         
-        # Update configuration with new version after successful build (only in CICD mode)
+        # Update configuration with new version and set readytodeploy = 1 after successful build (only in CICD mode)
         if original_index is not None:
             original_config[original_index]['version'] = version
+            original_config[original_index]['readytodeploy'] = 1
             save_config(str(config_path), original_config)
+            print(f"Set readytodeploy = 1 for {image_tag} version {version}")
         else:
             print(f"Warning: Could not find {image_tag} in original configuration, not updating version")
             
